@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+
+import curses
+import random
+import time
+
+
+class FishGame:
+    def __init__(self, stdscr):
+        self.stdscr = stdscr
+        self.running = True
+        self.game_over = False
+        self.score = 0
+        self.lives = 3
+        self.level = 1
+
+        self.player = [0, 0]
+        self.player_angle = 0
+        self.food = []
+        self.enemies = []
+        self.spawn_delay = 2.2
+        self.enemy_delay = 1.2
+        self.last_food_spawn = 0.0
+        self.last_enemy_spawn = 0.0
+        self.last_update = 0.0
+
+    def setup(self):
+        curses.curs_set(0)
+        self.stdscr.nodelay(True)
+        self.stdscr.keypad(True)
+        self.stdscr.timeout(50)
+        curses.start_color()
+        curses.use_default_colors()
+
+        curses.init_pair(1, curses.COLOR_CYAN, -1)
+        curses.init_pair(2, curses.COLOR_YELLOW, -1)
+        curses.init_pair(3, curses.COLOR_RED, -1)
+        curses.init_pair(4, curses.COLOR_GREEN, -1)
+        curses.init_pair(5, curses.COLOR_WHITE, -1)
+        curses.init_pair(6, curses.COLOR_BLUE, -1)
+
+        self.resize()
+        self.spawn_player()
+        self.spawn_food(4)
+
+    def resize(self):
+        self.height, self.width = self.stdscr.getmaxyx()
+        self.board_h = max(12, self.height - 4)
+        self.board_w = max(20, self.width - 2)
+
+    def spawn_player(self):
+        self.player = [self.board_w // 2, self.board_h // 2]
+        self.player_angle = 0
+
+    def spawn_food(self, count=1):
+        for _ in range(count):
+            if len(self.food) < 8:
+                self.food.append([
+                    random.randint(2, self.board_w - 3),
+                    random.randint(2, self.board_h - 3),
+                ])
+
+    def spawn_enemy(self):
+        side = random.choice(["top", "bottom", "left", "right"])
+        x, y = 1, 1
+
+        if side == "top":
+            x = random.randint(1, self.board_w - 2)
+            y = 1
+        elif side == "bottom":
+            x = random.randint(1, self.board_w - 2)
+            y = self.board_h - 2
+        elif side == "left":
+            x = 1
+            y = random.randint(1, self.board_h - 2)
+        else:
+            x = self.board_w - 2
+            y = random.randint(1, self.board_h - 2)
+
+        self.enemies.append([x, y, 0])
+
+    def move_player(self, key):
+        if key in (ord('q'), ord('Q')):
+            self.running = False
+            return
+
+        if key in (ord(' '), ord('s'), ord('S')):
+            self.player_angle = (self.player_angle + 45) % 360
+            return
+
+        if key in (curses.KEY_LEFT, ord('a'), ord('A')):
+            dx, dy = -1, 0
+            self.player_angle = 180
+        elif key in (curses.KEY_RIGHT, ord('d'), ord('D')):
+            dx, dy = 1, 0
+            self.player_angle = 0
+        elif key in (curses.KEY_UP, ord('w'), ord('W')):
+            dx, dy = 0, -1
+            self.player_angle = 270
+        elif key in (curses.KEY_DOWN, ord('x'), ord('X')):
+            dx, dy = 0, 1
+            self.player_angle = 90
+        else:
+            return
+
+        self.player[0] += dx
+        self.player[1] += dy
+        self.player[0] = max(1, min(self.player[0], self.board_w - 2))
+        self.player[1] = max(1, min(self.player[1], self.board_h - 2))
+
+    def update_enemies(self):
+        for enemy in self.enemies[:]:
+            ex, ey, _ = enemy
+            dx = 0
+            dy = 0
+
+            if ex < self.player[0]:
+                dx = 1
+            elif ex > self.player[0]:
+                dx = -1
+
+            if ey < self.player[1]:
+                dy = 1
+            elif ey > self.player[1]:
+                dy = -1
+
+            if dx != 0 and dy != 0:
+                if random.random() < 0.5:
+                    dx = 0
+                else:
+                    dy = 0
+
+            enemy[0] += dx
+            enemy[1] += dy
+
+            if [enemy[0], enemy[1]] == self.player:
+                self.lives -= 1
+                self.enemies.remove(enemy)
+                self.player = [self.board_w // 2, self.board_h // 2]
+                self.player_angle = 0
+                if self.lives <= 0:
+                    self.running = False
+                    self.game_over = True
+                break
+
+    def handle_food(self):
+        for item in self.food[:]:
+            if item == self.player:
+                self.food.remove(item)
+                self.score += 1
+                self.level = 1 + (self.score // 5)
+                self.spawn_delay = max(0.8, 2.2 - (self.level * 0.15))
+                self.enemy_delay = max(0.4, 1.2 - (self.level * 0.08))
+                self.spawn_food(1)
+
+    def draw_fish(self, x, y, angle, color_pair, is_enemy=False):
+        body = [
+            " .--. ",
+            "(o  o)",
+            " `--' "
+        ]
+
+        if angle in (0, 360):
+            tail = ">" * 2
+            body = [" .--. ", "(o  o)", " `--' "]
+        elif angle in (45, 315):
+            tail = " /"
+            body = ["   .-.", "  (o o)", " >`-' "]
+        elif angle in (90, 270):
+            tail = "^"
+            body = [" .--.", "(o o)", " `--' "]
+        elif angle in (135, 225):
+            tail = " \\"
+            body = [" .--.", "(o o)", " `--' "]
+        elif angle in (180, 540):
+            tail = "<" * 2
+            body = [" .--. ", "(o  o)", " `--' "]
+        elif angle in (205, 245):
+            tail = " /"
+            body = [" .--. ", "(o  o)", " `--' "]
+        else:
+            tail = ">"
+            body = [" .--. ", "(o  o)", " `--' "]
+
+        if is_enemy:
+            eye = "X"
+        else:
+            eye = "o"
+
+        fish_rows = [
+            " .--. ",
+            f"( {eye}  {eye})",
+            " `--' "
+        ]
+
+        fish_rows[0] = fish_rows[0] + " " + tail
+        fish_rows[1] = fish_rows[1] + " " + tail
+        fish_rows[2] = fish_rows[2] + " " + tail
+
+        if angle >= 180:
+            fish_rows = [row[::-1] for row in fish_rows]
+
+        for row_index, row in enumerate(fish_rows):
+            try:
+                self.stdscr.addstr(y + row_index, x, row, color_pair)
+            except curses.error:
+                pass
+
+    def draw_food(self, x, y):
+        try:
+            self.stdscr.addstr(y, x, "*", curses.color_pair(2))
+        except curses.error:
+            pass
+
+    def draw_enemy(self, x, y):
+        try:
+            self.stdscr.addstr(y, x, "X", curses.color_pair(3))
+        except curses.error:
+            pass
+
+    def draw_hud(self):
+        try:
+            self.stdscr.addstr(0, 2, f"Score: {self.score}   Lives: {self.lives}   Level: {self.level}", curses.color_pair(4))
+            self.stdscr.addstr(1, 2, "Arrow keys/WASD move   Space spins   Q quits", curses.color_pair(5))
+        except curses.error:
+            pass
+
+    def draw(self):
+        self.stdscr.erase()
+
+        for x in range(self.board_w):
+            try:
+                self.stdscr.addstr(0, x, "-")
+                self.stdscr.addstr(self.board_h - 1, x, "-")
+            except curses.error:
+                pass
+
+        for y in range(self.board_h):
+            try:
+                self.stdscr.addstr(y, 0, "|")
+                self.stdscr.addstr(y, self.board_w - 1, "|")
+            except curses.error:
+                pass
+
+        for fx, fy in self.food:
+            self.draw_food(fx, fy)
+
+        for ex, ey, _ in self.enemies:
+            self.draw_enemy(ex, ey)
+
+        self.draw_fish(self.player[0], self.player[1], self.player_angle, curses.color_pair(1))
+        self.draw_hud()
+
+        if self.game_over:
+            try:
+                self.stdscr.addstr(self.board_h // 2, max(0, self.board_w // 2 - 6), "GAME OVER", curses.color_pair(3))
+                self.stdscr.addstr(self.board_h // 2 + 1, max(0, self.board_w // 2 - 12), "Press Q to exit", curses.color_pair(5))
+            except curses.error:
+                pass
+
+        self.stdscr.refresh()
+
+    def main_loop(self):
+        self.setup()
+        now = time.monotonic()
+
+        while self.running:
+            key = self.stdscr.getch()
+            if key != -1:
+                self.move_player(key)
+
+            current = time.monotonic()
+            if current - self.last_food_spawn >= self.spawn_delay:
+                self.spawn_food(1)
+                self.last_food_spawn = current
+
+            if current - self.last_enemy_spawn >= self.enemy_delay:
+                self.spawn_enemy()
+                self.last_enemy_spawn = current
+
+            self.update_enemies()
+            self.handle_food()
+            self.draw()
+            time.sleep(0.03)
+
+
+def run(stdscr):
+    game = FishGame(stdscr)
+    game.main_loop()
+
+
+if __name__ == "__main__":
+    curses.wrapper(run)
